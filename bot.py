@@ -4,8 +4,10 @@ import logging
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
+from vk_bot import handlers
+
 try:
-    from vk_bot.settings import TOKEN, GROUP_ID
+    import vk_bot.settings as settings
 except ImportError:
     exit('Copy settings.py.default and set the token')
 
@@ -25,10 +27,25 @@ def configure_log():
     log.addHandler(file_handler)
     log.setLevel(logging.DEBUG)
 
+class UserState:
+    """
+    Состояние пользователя внутри сценария
+    """
+    def __init__(self, scenario_name, step_name, context=None):
+        self.scenario_name = scenario_name
+        self.step_name = step_name
+        self.context = context or {}
 
 class Bot:
     """
+    Conf Registration by vk.com scenario
     Used Python 3.7
+
+    Answers questions about date, place and registration
+    -asks name
+    -asks email
+    -succesfull registration message
+    if steps fails asks clarifying question until it completes
     """
     def __init__(self, group_id, token):
         """
@@ -38,11 +55,10 @@ class Bot:
         """
         self.group_id = group_id
         self.token = token
-
         self.vk = vk_api.VkApi(token=token)
         self.long_poller = VkBotLongPoll(self.vk, self.group_id)
-
         self.api = self.vk.get_api()
+        self.user_states = dict() # user_id -> UserState
 
     def run(self):
         """Run bot"""
@@ -60,18 +76,71 @@ class Bot:
         :param event: VkBotMessageEvent object
         :return: None
         """
-        if event.type == VkBotEventType.MESSAGE_NEW:
-            log.info('Sending message')
-            self.api.messages.send(
-                message=event.message.text,
-                random_id=random.randint(0, 2 ** 20),
-                peer_id=event.message.peer_id,
-            )
-        else:
+        if event.type != VkBotEventType.MESSAGE_NEW:
             log.info('We can`t procces this event... just yet %s', event.type.name)
+            return
+
+        user_id = event.message.peer_id
+        text = event.message.text
+
+        if user_id in self.user_states:
+            # continue scenario
+            text_to_send = self.continue_scenario(user_id, event.message.text)
+        else:
+            # search intent
+            for intent in settings.INTENTS:
+                if any(token in text for token in intent['tokens']):
+                    # run intent
+                    if intent['answer']:
+                        text_to_send = intent['answer']
+                    else:
+                        text_to_send = self.start_scenario(user_id, intent['scenario'])
+                    break
+            else:
+                text_to_send = settings.DEFAULT_ANSWER
+
+        self.api.messages.send(
+            message=text_to_send,
+            random_id=random.randint(0, 2 ** 20),
+            peer_id=user_id,
+        )
+
+
+    def start_scenario(self, user_id, scenario_name):
+        scenario = settings.SCENARIOS[scenario_name]
+        first_step = scenario['first_step']
+        step = scenario['steps'][first_step]
+        text_to_send = step['text']
+        self.user_states[user_id] = UserState(scenario_name=scenario_name, step_name=first_step)
+        return text_to_send
+
+    def continue_scenario(self, user_id, text):
+        state = self.user_states[user_id]
+        # continue scenario
+        steps = settings.SCENARIOS[state.scenario_name]['steps']
+        step = steps[state.step_name]
+
+        handler = getattr(handlers, step['handler'])
+        if handler(text=text, context=state.context):
+            # next step
+            next_step = steps[step['next_step']]
+            text_to_send = next_step['text'].format(**state.context)
+            if next_step['next_step']:
+                # switch to next step
+                state.step_name = step['next_step']
+            else:
+                # finish scenario
+                self.user_states.pop(user_id)
+        else:
+            # retry current step
+            text_to_send = step['failure_text'].format(**state.context)
+
+        return text_to_send
+
+
 
 
 if __name__ == '__main__':
     configure_log()
-    bot = Bot(GROUP_ID, TOKEN)
+    bot = Bot(settings.GROUP_ID, settings.TOKEN)
     bot.run()
