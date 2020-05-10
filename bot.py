@@ -89,7 +89,8 @@ class Bot:
         else:
             # search intent
             for intent in settings.INTENTS:
-                if any(token in text for token in intent['tokens']):
+                log.debug(f'User gets {intent}')
+                if any(token in text.lower() for token in intent['tokens']):
                     # run intent
                     if intent['answer']:
                         text_to_send = intent['answer']
@@ -131,6 +132,7 @@ class Bot:
             else:
                 # finish scenario
                 self.user_states.pop(user_id)
+                log.info('Registered: {name} {email}'.format(**state.context))
         else:
             # retry current step
             text_to_send = step['failure_text'].format(**state.context)
