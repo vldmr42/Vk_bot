@@ -2,9 +2,11 @@ import random
 import logging
 
 import vk_api
+from pony.orm import db_session
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
 from vk_bot import handlers
+from vk_bot.models import UserState
 
 try:
     import vk_bot.settings as settings
@@ -27,14 +29,15 @@ def configure_log():
     log.addHandler(file_handler)
     log.setLevel(logging.DEBUG)
 
-class UserState:
-    """
-    Состояние пользователя внутри сценария
-    """
-    def __init__(self, scenario_name, step_name, context=None):
-        self.scenario_name = scenario_name
-        self.step_name = step_name
-        self.context = context or {}
+
+# class UserState:
+#     """
+#     Состояние пользователя внутри сценария
+#     """
+#     def __init__(self, scenario_name, step_name, context=None):
+#         self.scenario_name = scenario_name
+#         self.step_name = step_name
+#         self.context = context or {}
 
 class Bot:
     """
@@ -47,6 +50,7 @@ class Bot:
     -succesfull registration message
     if steps fails asks clarifying question until it completes
     """
+
     def __init__(self, group_id, token):
         """
 
@@ -58,7 +62,6 @@ class Bot:
         self.vk = vk_api.VkApi(token=token)
         self.long_poller = VkBotLongPoll(self.vk, self.group_id)
         self.api = self.vk.get_api()
-        self.user_states = dict() # user_id -> UserState
 
     def run(self):
         """Run bot"""
@@ -69,6 +72,7 @@ class Bot:
             except Exception as err:
                 log.error('Error during event processing')
 
+    @db_session
     def on_event(self, event):
         """
         Procces event, and if its new message, send it back
@@ -83,9 +87,11 @@ class Bot:
         user_id = event.message.peer_id
         text = event.message.text
 
-        if user_id in self.user_states:
+        state = UserState.get(user_id=str(user_id))
+
+        if state is not None:
             # continue scenario
-            text_to_send = self.continue_scenario(user_id, event.message.text)
+            text_to_send = self.continue_scenario(event.message.text, state)
         else:
             # search intent
             for intent in settings.INTENTS:
@@ -106,17 +112,15 @@ class Bot:
             peer_id=user_id,
         )
 
-
     def start_scenario(self, user_id, scenario_name):
         scenario = settings.SCENARIOS[scenario_name]
         first_step = scenario['first_step']
         step = scenario['steps'][first_step]
         text_to_send = step['text']
-        self.user_states[user_id] = UserState(scenario_name=scenario_name, step_name=first_step)
+        UserState(user_id=str(user_id), scenario_name=scenario_name, step_name=first_step, context={})
         return text_to_send
 
-    def continue_scenario(self, user_id, text):
-        state = self.user_states[user_id]
+    def continue_scenario(self, text, state):
         # continue scenario
         steps = settings.SCENARIOS[state.scenario_name]['steps']
         step = steps[state.step_name]
@@ -131,15 +135,13 @@ class Bot:
                 state.step_name = step['next_step']
             else:
                 # finish scenario
-                self.user_states.pop(user_id)
+                state.delete()
                 log.info('Registered: {name} {email}'.format(**state.context))
         else:
             # retry current step
             text_to_send = step['failure_text'].format(**state.context)
 
         return text_to_send
-
-
 
 
 if __name__ == '__main__':

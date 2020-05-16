@@ -49,3 +49,11 @@ SCENARIOS = {
 }
 
 DEFAULT_ANSWER = 'Не знаю как Вам ответить. Могу сказать когда и где пройдет конференция и зарегистрировать.'
+
+DB_CONFIG = {
+    provider='postgres',
+    user='',
+    password='',
+    host='localhost',
+    database='vk_chat_bot',
+}
