@@ -13,4 +13,11 @@ class UserState(db.Entity):
     step_name = Required(str)
     context = Required(Json)
 
+class Registration(db.Entity):
+    """
+    Registration information
+    """
+    name = Required(str)
+    email = Required(str)
+
 db.generate_mapping(create_tables=True)

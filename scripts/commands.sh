@@ -1,0 +1,1 @@
+python -m unittest vk_bot/tests

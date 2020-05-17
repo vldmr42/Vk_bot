@@ -1,13 +1,23 @@
 from unittest import TestCase
 from unittest.mock import patch, Mock, ANY
 
+from pony.orm import db_session, rollback
 from vk_api.bot_longpoll import VkBotMessageEvent
 
 from vk_bot.bot import Bot
+from vk_bot.generate_ticket import generate_ticket
+
+
+def isolate_db(test_func):
+    def wrapper(*args, **kwargs):
+        with db_session:
+            test_func(*args, **kwargs)
+            rollback()
+
+    return wrapper
 
 
 class Test1(TestCase):
-
     RAW_EVENT = {
         'type': 'message_new',
         'object': {
@@ -29,6 +39,7 @@ class Test1(TestCase):
         'group_id': 194914416,
         'event_id': 'e8ee2a36f351b53850bab2f4177e7ce34a4469f4'}
 
+    @isolate_db
     def test_run(self):
         count = 5
         obj = Mock()
@@ -66,3 +77,15 @@ class Test1(TestCase):
             random_id=ANY,
             peer_id=self.RAW_EVENT['object']['message']['peer_id'],
         )
+
+    def test_image_generation(self):
+        with open('files/avatar_test.png', 'rb') as avatar_file:
+            avatar_mock = Mock()
+            avatar_mock.content = avatar_file.read()
+
+        with patch('request.get', return_value=avatar_mock):
+            ticket_file = generate_ticket('NAME', 'EMAIL')
+
+        with open('files/my1.png', 'rb') as expected_file:
+            expected_bytes = expected_file.read()
+        assert ticket_file.read() == expected_bytes
